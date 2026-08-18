@@ -1,0 +1,75 @@
+# ===== 操作系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== 日志 / 临时文件 =====
+*.log
+logs/
+tmp/
+temp/
+
+# ===== Go 后端 (api/) =====
+# 编译产物
+api/*.exe
+api/*.exe~
+api/*.dll
+api/*.so
+api/*.dylib
+api/training
+api/main
+# Go 插件/依赖目录
+api/vendor/
+# Go 测试与覆盖率
+*.test
+*.out
+coverage.txt
+coverage.html
+# Go 工作区文件
+go.work
+go.work.sum
+# 环境变量 / 密钥（不提交本地配置）
+api/.env
+api/config.local.yaml
+# 用户上传的文件（运行时生成，不纳入版本控制）
+api/upload/
+# 分片上传暂存目录（运行时生成）
+api/.chunks/
+
+# ===== Vue 前端 (back/ 与 front/) =====
+# 依赖目录（插件）
+back/node_modules/
+front/node_modules/
+# 构建产物
+back/dist/
+front/dist/
+# 本地环境变量
+back/.env.local
+front/.env.local
+back/.env.*.local
+front/.env.*.local
+# 缓存
+back/.vite/
+front/.vite/
+back/.cache/
+front/.cache/
+# 编辑器
+back/.idea/
+front/.idea/
+back/.vscode/
+front/.vscode/
+
+# ===== Docker 离线部署 =====
+# 导出的镜像 tarball（体积大，不纳入版本控制）
+training-arm64.tar.gz
+*.tar.gz
+docker-20.10.24.tgz
+# 数据库密码持久化文件（含明文密码，勿提交）
+docker/.db.env
+
+# ===== Trae / 其他 =====
+.trae/

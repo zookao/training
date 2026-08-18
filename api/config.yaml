@@ -1,0 +1,37 @@
+# 培训系统后端配置
+server:
+  port: 8000
+  mode: debug   # debug / release
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  username: root
+  password: root
+  database: training
+  charset: utf8mb4
+  maxIdleConns: 10
+  maxOpenConns: 100
+
+jwt:
+  # 生产环境请通过环境变量 JWT_SIGNING_KEY 注入高熵随机密钥，勿提交到仓库
+  signingKey: training-secret-key-2026
+  expiresTime: 24   # 单位：小时
+  issuer: training
+
+libreoffice:
+  # soffice 二进制路径。留空则自动探测 PATH 中的 soffice/libreoffice（macOS brew 装 / Linux apt 装均可）。
+  # 便携版填：./bin/libreoffice/program/soffice
+  path: ""
+  # 最大并发转换数。LibreOffice headless 并发不稳定（共享字体缓存/资源竞争），
+  # 默认 1 = 严格串行排队，多个课件上传时自动排队等待，避免转换失败。
+  # 服务器内存充裕（>8GB）可调到 2~3 提高吞吐，但不建议超过 3。
+  maxConcurrency: 1
+  # 排队等待超时（秒）。前方任务过多时，最多等待 N 秒后返回错误，提示用户稍后重试。
+  # 默认 1800=30分钟（约 3 个大文件转换的上限）。测试时可调小到 2~5 秒验证超时机制。
+  queueTimeoutSec: 1800
+
+ffmpeg:
+  # ffmpeg 二进制路径。留空则自动探测 PATH 中的 ffmpeg（macOS brew 装 / Linux apt 装均可）。
+  # 便携版填：./bin/ffmpeg/ffmpeg（ffprobe 需在同一目录）
+  path: ""

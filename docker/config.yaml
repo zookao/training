@@ -1,0 +1,26 @@
+# 培训系统后端配置（容器内运行时）
+# 敏感字段由环境变量覆盖：MYSQL_PASSWORD、JWT_SIGNING_KEY
+server:
+  port: 8000
+  mode: release
+
+mysql:
+  host: 127.0.0.1        # MariaDB 与后端同容器
+  port: 3306
+  username: root
+  password: root          # 被 MYSQL_PASSWORD 环境变量覆盖
+  database: training
+  charset: utf8mb4
+  maxIdleConns: 10
+  maxOpenConns: 100
+
+jwt:
+  signingKey: training-secret-key-2026   # 被 JWT_SIGNING_KEY 环境变量覆盖
+  expiresTime: 24
+  issuer: training
+
+libreoffice:
+  path: ""    # 留空自动探测 PATH（容器内 /usr/bin/soffice）
+
+ffmpeg:
+  path: ""    # 留空自动探测 PATH（容器内 /usr/bin/ffmpeg）

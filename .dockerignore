@@ -1,0 +1,37 @@
+# Git & IDE
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+
+# 构建产物（容器内重新构建，不需要宿主的）
+**/node_modules
+**/dist
+**/.vite
+
+# Go 编译产物
+api/training
+api/main
+api/vendor
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 运行时生成目录
+api/upload
+api/.chunks
+
+# 日志 & 临时文件
+*.log
+logs/
+tmp/
+temp/
+
+# 文档（不影响运行）
+README.md
+DEPLOY.md
+
+# Docker 自身（Dockerfile 在构建上下文中需要，但 .dockerignore 不影响 COPY docker/）
+# 注意: 不要忽略 docker/ 目录，Dockerfile 需要从中 COPY 配置文件
