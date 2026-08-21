@@ -227,11 +227,16 @@ const pdfCanvasRef = ref<HTMLCanvasElement | null>(null)
 const currentPage = ref(1)
 const totalPages = ref(0)
 let pdfDoc: pdfjsLib.PDFDocumentProxy | null = null
+// 当前在途的渲染任务：新渲染前必须 cancel 旧的，否则同一张 canvas 并发 render
+// 会出现第二次渲染重置 canvas.width → 清空并重置 transform → 第一次渲染的后续
+// 绘制指令以 identity transform 绘制 PDF（y 轴朝上），导致画面上下颠倒。
+let currentRenderTask: pdfjsLib.RenderTask | null = null
 
 async function loadCourseware() {
   const video = currentVideo.value
   // 无 PDF（旧课件未转换）则清空，回退到"本节暂无课件"提示
   if (!video?.coursewarePdf) {
+    cancelRender()
     if (pdfDoc) {
       pdfDoc.destroy()
       pdfDoc = null
@@ -240,7 +245,8 @@ async function loadCourseware() {
     currentPage.value = 1
     return
   }
-  // 释放旧文档
+  // 释放旧文档前先取消在途渲染，避免旧 doc 的 render 在 destroy 后仍写 canvas
+  cancelRender()
   if (pdfDoc) {
     pdfDoc.destroy()
     pdfDoc = null
@@ -272,22 +278,52 @@ async function loadCourseware() {
 // 渲染指定页到 canvas，按容器尺寸自适应缩放（含 devicePixelRatio 提升清晰度）
 async function renderPage(n: number) {
   if (!pdfDoc || !pdfCanvasRef.value) return
+  // 取消上一次在途渲染，避免同一 canvas 并发 render 导致画面颠倒/撕裂
+  cancelRender()
   const page = await pdfDoc.getPage(n)
+  // getPage 是异步的，期间可能已切换视频/销毁 doc，需复检
+  if (!pdfDoc || !pdfCanvasRef.value) return
   const canvas = pdfCanvasRef.value
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const container = pptxContainerRef.value
-  const containerW = container ? container.clientWidth - 16 : 800
-  const containerH = container ? container.clientHeight - 16 : 600
+  const containerW = container ? Math.max(0, container.clientWidth - 16) : 800
+  const containerH = container ? Math.max(0, container.clientHeight - 16) : 600
   const viewport1 = page.getViewport({ scale: 1 })
-  const scale = Math.min(containerW / viewport1.width, containerH / viewport1.height)
+  let scale = Math.min(containerW / viewport1.width, containerH / viewport1.height)
+  // 容器尚未布局（宽高为 0）时 scale 退化为按宽度或默认 1，避免 scale<=0
+  // 触发 viewport transform 翻转，产生倒立画面
+  if (!(scale > 0)) {
+    scale = containerW > 0 ? containerW / viewport1.width : (containerH > 0 ? containerH / viewport1.height : 1)
+  }
   const dpr = window.devicePixelRatio || 1
   const viewport = page.getViewport({ scale: scale * dpr })
   canvas.width = viewport.width
   canvas.height = viewport.height
   canvas.style.width = viewport1.width * scale + 'px'
   canvas.style.height = viewport1.height * scale + 'px'
-  await page.render({ canvasContext: ctx, viewport }).promise
+  currentRenderTask = page.render({ canvasContext: ctx, viewport })
+  try {
+    await currentRenderTask.promise
+  } catch (e: unknown) {
+    // cancel() 会以 RenderingCancelledException reject，属正常中断，忽略
+    const name = (e as { name?: string })?.name
+    if (name !== 'RenderingCancelledException') throw e
+  } finally {
+    currentRenderTask = null
+  }
+}
+
+// 取消在途渲染任务：cancel 后其 promise 会以 RenderingCancelledException reject
+function cancelRender() {
+  if (currentRenderTask) {
+    try {
+      currentRenderTask.cancel()
+    } catch {
+      /* ignore */
+    }
+    currentRenderTask = null
+  }
 }
 
 function prevPage() {
@@ -669,6 +705,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   flushReport(true)
   stopTimer()
+  cancelRender()
+  if (pdfDoc) {
+    pdfDoc.destroy()
+    pdfDoc = null
+  }
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   window.removeEventListener('resize', handleResize)
