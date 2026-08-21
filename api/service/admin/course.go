@@ -303,7 +303,8 @@ func ParseDurations(file []byte, totalDuration int) ([]int, error) {
 	return durations, nil
 }
 
-// parseTimeToSeconds "00:03:23" → 203, "03:23" → 203, Excel时间序列号 → 秒
+// parseTimeToSeconds "00:03:23" → 203, "03:23" → 203, "00:00:05.86" → 6, Excel时间序列号 → 秒
+// 秒部分支持小数毫秒（如 05.86），四舍五入到整数秒，兼容外部播放器/工具复制的时间戳
 func parseTimeToSeconds(s string) int {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -311,18 +312,18 @@ func parseTimeToSeconds(s string) int {
 	}
 	// 全角冒号转半角
 	s = strings.ReplaceAll(s, "：", ":")
-	// 1. hh:mm:ss 或 mm:ss
+	// 1. hh:mm:ss 或 mm:ss（秒部分可为 05.86 形式）
 	parts := strings.Split(s, ":")
 	if len(parts) == 3 {
 		h, _ := strconv.Atoi(parts[0])
 		m, _ := strconv.Atoi(parts[1])
-		sec, _ := strconv.Atoi(parts[2])
-		return h*3600 + m*60 + sec
+		secF, _ := strconv.ParseFloat(parts[2], 64)
+		return h*3600 + m*60 + int(math.Round(secF))
 	}
 	if len(parts) == 2 {
 		m, _ := strconv.Atoi(parts[0])
-		sec, _ := strconv.Atoi(parts[1])
-		return m*60 + sec
+		secF, _ := strconv.ParseFloat(parts[1], 64)
+		return m*60 + int(math.Round(secF))
 	}
 	// 2. Excel 时间序列号（浮点数，1天=86400秒）
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
