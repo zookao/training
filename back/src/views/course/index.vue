@@ -727,6 +727,11 @@ function clearDurations() {
 function savePageDurations() {
   if (!pageDurationTarget.value) return
   const arr = pageDurations.map((p) => p.duration || 0)
+  const zeroIdx = arr.findIndex((d) => d <= 0)
+  if (zeroIdx >= 0) {
+    ElMessage.warning(`第 ${zeroIdx + 1} 页翻页时长为 0，请填写大于 0 的值`)
+    return
+  }
   pageDurationTarget.value.coursewarePages = JSON.stringify(arr)
   ElMessage.success('课件时长已保存，提交课程后生效')
   pageDurationVisible.value = false

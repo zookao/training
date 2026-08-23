@@ -209,8 +209,9 @@ function avgScores() {
   if (selectedQuestions.value.length === 0) return
   const avg = Math.floor(100 / selectedQuestions.value.length)
   const remainder = 100 - avg * selectedQuestions.value.length
+  // 余数均匀分散到前 remainder 道题，避免全堆第一题造成极端不均
   selectedQuestions.value.forEach((q, i) => {
-    scoreMap.value[q.id] = avg + (i === 0 ? remainder : 0)
+    scoreMap.value[q.id] = avg + (i < remainder ? 1 : 0)
   })
 }
 

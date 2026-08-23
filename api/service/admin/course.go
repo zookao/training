@@ -300,6 +300,12 @@ func ParseDurations(file []byte, totalDuration int) ([]int, error) {
 			durations[i] = 0
 		}
 	}
+	// 翻页时长为 0 表示该页无对应视频区间（相邻打点相同或末页打点等于视频时长），播放中无法触发翻页
+	for i, d := range durations {
+		if d <= 0 {
+			return nil, fmt.Errorf("第 %d 页翻页时长为 0，请检查打点（相邻页打点不可相同，末页打点须小于视频时长）", i+1)
+		}
+	}
 	return durations, nil
 }
 
