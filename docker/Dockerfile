@@ -39,6 +39,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o t
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
 
 # 安装运行时依赖：MariaDB + Nginx + ffmpeg + LibreOffice(headless) + CJK 字体 + supervisor
 RUN tee /etc/apt/sources.list <<'EOF'
@@ -54,9 +55,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-wqy-zenhei \
     supervisor \
     logrotate \
+    tzdata \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# 容器时区设为北京时间（默认 UTC 会影响日志时间戳与日志轮转午夜计算）
+RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 
 # 创建应用目录（MariaDB 数据目录 /app/db 由 volume 持久化）
 RUN mkdir -p /app/upload /app/.chunks /app/db /var/log/supervisor /run/mysqld \
