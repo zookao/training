@@ -793,12 +793,15 @@ onBeforeUnmount(() => {
   height: 100%;
   object-fit: contain;
   display: block;
-  // 未观看完成时隐藏进度条与当前时间，仅保留剩余时间显示
+  // 未观看完成时隐藏进度条与当前时间，强制显示剩余时间
   &.locked::-webkit-media-controls-timeline {
     display: none !important;
   }
   &.locked::-webkit-media-controls-current-time-display {
     display: none !important;
+  }
+  &.locked::-webkit-media-controls-time-remaining-display {
+    display: flex !important;
   }
 }
 .locked-tip {
