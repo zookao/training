@@ -278,7 +278,11 @@ func ReportProgress(userID uint, req userModel.ProgressReq) (*userModel.Progress
 			if newPosition > nextCheckPos {
 				newPosition = nextCheckPos
 			}
-		} else if newMax >= nextCheckPos {
+		} else if newMax >= nextCheckPos || req.Position >= nextCheckPos {
+			// 用户已播放到校验点（前端防快进保证 currentTime 不超真实最远点）。
+			// 跨会话重新进入时 oldMax 可能落后 nextCheckPos 超过单次上报上限（13s），
+			// 此时 newMax 受防作弊 cap 限制到不了 nextCheckPos，但用户确实已到达，
+			// 故以 req.Position 兜底置为待校验，避免 CheckPass 因 maxPosition<nextCheckPos 拒绝、弹窗卡死。
 			checkPending = true
 			newMax = nextCheckPos
 			if newPosition > nextCheckPos {

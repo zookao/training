@@ -21,7 +21,6 @@
               controlslist="nodownload noremoteplayback"
               preload="metadata"
               class="video-el"
-              :class="{ locked: !currentVideo.completed }"
               @loadedmetadata="onLoadedMetadata"
               @timeupdate="onTimeUpdate"
               @seeking="onSeeking"
@@ -785,16 +784,6 @@ onBeforeUnmount(() => {
   height: 100%;
   object-fit: contain;
   display: block;
-  // 未观看完成时隐藏原生进度条
-  &.locked::-webkit-media-controls-timeline {
-    display: none !important;
-  }
-  &.locked::-webkit-media-controls-current-time-display {
-    display: none !important;
-  }
-  &.locked::-webkit-media-controls-time-remaining-display {
-    display: none !important;
-  }
 }
 .locked-tip {
   position: absolute;
