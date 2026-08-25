@@ -53,6 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     fonts-wqy-zenhei \
     supervisor \
+    logrotate \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -77,10 +78,14 @@ RUN rm -f /etc/nginx/sites-enabled/default
 # supervisord 配置
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 
+# 日志按天轮转配置 + 轮转脚本
+COPY docker/logrotate-supervisor /etc/logrotate.d/supervisor
+COPY docker/logrotate.sh /app/logrotate.sh
+
 # 启动脚本
 COPY docker/entrypoint.sh /app/entrypoint.sh
 COPY docker/wait-for-mysql.sh /app/wait-for-mysql.sh
-RUN chmod +x /app/entrypoint.sh /app/wait-for-mysql.sh
+RUN chmod +x /app/entrypoint.sh /app/wait-for-mysql.sh /app/logrotate.sh
 
 EXPOSE 80 81
 
