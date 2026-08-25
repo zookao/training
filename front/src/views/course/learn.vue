@@ -33,6 +33,7 @@
               <span>未完成不可快进</span>
             </div>
             <el-empty v-else-if="!currentVideo" description="暂无视频" :image-size="60" />
+            <div v-if="currentVideo && !currentVideo.completed && remainingSec > 0" class="remaining-tip">{{ remainingText }}</div>
           </div>
         </div>
 
@@ -184,14 +185,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowLeftBold, ArrowRightBold, VideoCamera, CircleCheckFilled, Lock, Download, DocumentRemove, Loading, WarningFilled, Timer, Connection } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as pdfjsLib from 'pdfjs-dist'
-import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { getCourseLearn, reportProgress, checkPass, type CourseLearnRes, type VideoLearnItem } from '@/api/learning'
 import { getCourseExam, type ExamTestpaperItem } from '@/api/exam'
 import { authUrl } from '@/utils/authUrl'
 import ExamDialog from './exam-dialog.vue'
 import SlideCheck from './slide-check.vue'
 
-pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
+// 用 workerSrc 让 pdfjs 为每个文档独立管理 worker 生命周期：
+// workerPort 全局共享时 pdfDoc.destroy() 会销毁共享 worker，导致后续 getDocument 复用已销毁的 worker 报 "PDFWorker.fromPort - the worker is being destroyed"。
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
 const route = useRoute()
 const router = useRouter()
@@ -218,6 +221,18 @@ const currentVideo = computed<VideoLearnItem | undefined>(() => {
   return course.value.videos.find((v) => v.id === currentVideoId.value)
 })
 
+// 未完成时自定义显示的剩余时长（原生 webkit 时间伪元素在不同版本表现不一，改用 overlay）
+const remainingSec = ref(0)
+const remainingText = computed(() => {
+  let sec = remainingSec.value
+  if (!sec || sec < 0) sec = 0
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return h > 0 ? `-${pad(h)}:${pad(m)}:${pad(s)}` : `-${pad(m)}:${pad(s)}`
+})
+
 // ---------- 课件在线预览（PDF.js 翻页模式） ----------
 // 后端上传 PPTX 时已用 LibreOffice 转 PDF，前端用 pdfjs-dist 渲染到 canvas。
 // 原始 PPTX 保留用于下载，不再剥离任何元素，排版 100% 保真。
@@ -239,7 +254,7 @@ async function loadCourseware() {
   if (!video?.coursewarePdf) {
     cancelRender()
     if (pdfDoc) {
-      pdfDoc.destroy()
+      await pdfDoc.destroy()
       pdfDoc = null
     }
     totalPages.value = 0
@@ -249,7 +264,7 @@ async function loadCourseware() {
   // 释放旧文档前先取消在途渲染，避免旧 doc 的 render 在 destroy 后仍写 canvas
   cancelRender()
   if (pdfDoc) {
-    pdfDoc.destroy()
+    await pdfDoc.destroy()
     pdfDoc = null
   }
   coursewareError.value = false
@@ -491,6 +506,8 @@ function onLoadedMetadata() {
   }
   // 切换/加载后重置上次上报位置基准
   lastReportPosition = Math.floor(v.currentTime)
+  // 初始化剩余时长（未完成时由 overlay 显示）
+  remainingSec.value = v.duration > 0 ? Math.max(0, Math.floor(v.duration - v.currentTime)) : 0
   // 视频元素就绪后加载课件（watch(currentVideo) 在 DOM 重建前触发会取到旧 videoRef，
   // 改在此处加载确保 videoRef 指向新元素，避免与新 video 的 loadedmetadata 时序交叉）
   loadCourseware()
@@ -510,6 +527,8 @@ function onTimeUpdate() {
   if (v.currentTime > maxPlayedTime.value) {
     maxPlayedTime.value = v.currentTime
   }
+  // 同步剩余时长（未完成时由 overlay 显示）
+  remainingSec.value = v.duration > 0 ? Math.max(0, Math.floor(v.duration - v.currentTime)) : 0
   // 视频播放位置变化时联动课件翻页
   syncPageToPosition(Math.floor(v.currentTime))
   // 学习校验：到达校验点触发滑动弹窗（未弹出时）
@@ -793,7 +812,7 @@ onBeforeUnmount(() => {
   height: 100%;
   object-fit: contain;
   display: block;
-  // 未观看完成时隐藏进度条与当前时间，强制显示剩余时间
+  // 未观看完成时隐藏原生进度条与所有时间显示，剩余时长由自定义 overlay 展示
   &.locked::-webkit-media-controls-timeline {
     display: none !important;
   }
@@ -801,8 +820,20 @@ onBeforeUnmount(() => {
     display: none !important;
   }
   &.locked::-webkit-media-controls-time-remaining-display {
-    display: flex !important;
+    display: none !important;
   }
+}
+.remaining-tip {
+  position: absolute;
+  right: 70px;
+  bottom: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 5;
 }
 .locked-tip {
   position: absolute;
