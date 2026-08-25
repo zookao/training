@@ -21,6 +21,7 @@
               controlslist="nodownload noremoteplayback"
               preload="metadata"
               class="video-el"
+              :class="{ locked: !currentVideo.completed }"
               @loadedmetadata="onLoadedMetadata"
               @timeupdate="onTimeUpdate"
               @seeking="onSeeking"
@@ -201,6 +202,7 @@ const loading = ref(false)
 const course = ref<CourseLearnRes | null>(null)
 const videoRef = ref<HTMLVideoElement | null>(null)
 const currentVideoId = ref<number>(0)
+let pendingAutoPlay = false    // 切换视频后是否自动播放（autoNext/手动切换置 true，首次加载不自动播放）
 
 // 考试
 const testpapers = ref<ExamTestpaperItem[]>([])
@@ -402,10 +404,8 @@ function syncPageToPosition(position: number) {
   }
 }
 
-// 切换视频时自动加载课件
+// 切换视频时弹出待完成的校验（课件加载改在 onLoadedMetadata，确保 video 元素就绪后再加载）
 watch(currentVideo, () => {
-  loadCourseware()
-  // 若该视频有待完成的校验，立即弹出（阻断学习，须通过才能继续）
   if (currentVideo.value?.checkPending && !checkVisible.value) {
     triggerCheck(false)
   }
@@ -470,6 +470,7 @@ function selectVideo(videoId: number) {
 function switchVideo(videoId: number) {
   if (videoId === currentVideoId.value) return
   flushReport(true)
+  pendingAutoPlay = true
   selectVideo(videoId)
 }
 
@@ -490,8 +491,15 @@ function onLoadedMetadata() {
   }
   // 切换/加载后重置上次上报位置基准
   lastReportPosition = Math.floor(v.currentTime)
-  // 元数据加载后立即联动一次课件翻页（若课件已渲染）
+  // 视频元素就绪后加载课件（watch(currentVideo) 在 DOM 重建前触发会取到旧 videoRef，
+  // 改在此处加载确保 videoRef 指向新元素，避免与新 video 的 loadedmetadata 时序交叉）
+  loadCourseware()
   syncPageToPosition(Math.floor(v.currentTime))
+  // 自动播放下一节 / 手动切换后自动播放（首次加载不自动播放，等用户主动点）
+  if (pendingAutoPlay) {
+    pendingAutoPlay = false
+    v.play().catch(() => {})
+  }
 }
 
 // 记录自然播放进度（仅本地，不触发上报）
@@ -586,6 +594,7 @@ function autoNext() {
   const next = videos[idx + 1]
   if (next) {
     ElMessage.info('即将播放下一节')
+    pendingAutoPlay = true
     setTimeout(() => selectVideo(next.id), 800)
   }
 }
@@ -784,6 +793,13 @@ onBeforeUnmount(() => {
   height: 100%;
   object-fit: contain;
   display: block;
+  // 未观看完成时隐藏进度条与当前时间，仅保留剩余时间显示
+  &.locked::-webkit-media-controls-timeline {
+    display: none !important;
+  }
+  &.locked::-webkit-media-controls-current-time-display {
+    display: none !important;
+  }
 }
 .locked-tip {
   position: absolute;
