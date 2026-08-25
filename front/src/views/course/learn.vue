@@ -185,16 +185,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowLeftBold, ArrowRightBold, VideoCamera, CircleCheckFilled, Lock, Download, DocumentRemove, Loading, WarningFilled, Timer, Connection } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as pdfjsLib from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
 import { getCourseLearn, reportProgress, checkPass, type CourseLearnRes, type VideoLearnItem } from '@/api/learning'
 import { getCourseExam, type ExamTestpaperItem } from '@/api/exam'
 import { authUrl } from '@/utils/authUrl'
 import ExamDialog from './exam-dialog.vue'
 import SlideCheck from './slide-check.vue'
 
-// 用 workerSrc 让 pdfjs 为每个文档独立管理 worker 生命周期：
-// workerPort 全局共享时 pdfDoc.destroy() 会销毁共享 worker，导致后续 getDocument 复用已销毁的 worker 报 "PDFWorker.fromPort - the worker is being destroyed"。
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+// workerPort + ?worker：生产环境（远程 IP）workerSrc 会回退 fake worker 并失败，
+// 故用 Vite 打包的真实 worker。pdfDoc.destroy() 会销毁共享 worker，每次销毁后重建 workerPort。
+pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
 
 const route = useRoute()
 const router = useRouter()
@@ -255,6 +255,8 @@ async function loadCourseware() {
     cancelRender()
     if (pdfDoc) {
       await pdfDoc.destroy()
+      // destroy 会销毁共享 worker，重建 workerPort 供下次 getDocument 使用
+      pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
       pdfDoc = null
     }
     totalPages.value = 0
@@ -265,6 +267,7 @@ async function loadCourseware() {
   cancelRender()
   if (pdfDoc) {
     await pdfDoc.destroy()
+    pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
     pdfDoc = null
   }
   coursewareError.value = false
@@ -737,6 +740,8 @@ onBeforeUnmount(() => {
     pdfDoc.destroy()
     pdfDoc = null
   }
+  // destroy 会销毁共享 worker，重建 workerPort 供下次进入页面时使用
+  pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   window.removeEventListener('resize', handleResize)
