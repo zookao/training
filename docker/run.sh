@@ -2,18 +2,26 @@
 set -e
 
 # =============================================================================
-# 银河麒麟 V10 一键部署脚本（在服务器执行）
+# 一键部署脚本（在服务器执行）
 # 自动加载镜像（如未加载）→ 创建数据卷 → 启动容器
 #
 # 用法:
-#   ./run.sh                          # 使用默认密码启动
-#   MYSQL_PASSWORD=YourPass ./run.sh  # 指定数据库密码
-#   JWT_SIGNING_KEY=xxx ./run.sh      # 指定 JWT 密钥
+#   ./run.sh                          # 默认 arm64 启动
+#   ./run.sh amd64                   # 指定 amd64（x86_64 服务器）
+#   ./run.sh arm64                   # 指定 arm64（arm64 服务器）
+#   MYSQL_PASSWORD=YourPass ./run.sh # 指定数据库密码（架构用默认 arm64）
+#   JWT_SIGNING_KEY=xxx ./run.sh     # 指定 JWT 密钥
 # =============================================================================
 
-IMAGE_NAME="training:arm64"
+# 架构参数：第一个位置参数为 amd64/arm64，默认 arm64
+ARCH=${1:-arm64}
+case "$ARCH" in
+    amd64|arm64) ;;
+    *) echo "[run] 不支持的架构: $ARCH（可选 amd64/arm64）"; exit 1 ;;
+esac
+IMAGE_NAME="training:${ARCH}"
 CONTAINER_NAME="training"
-TARBALL="training-arm64.tar.gz"
+TARBALL="training-${ARCH}.tar.gz"
 
 ENV_FILE="$(dirname "$0")/.db.env"
 

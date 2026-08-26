@@ -3,22 +3,28 @@ set -e
 
 # =============================================================================
 # 构建脚本（在开发机执行）
-# 构建 arm64 Docker 镜像并导出为 tar.gz，供离线拷贝到银河麒麟 V10 服务器
+# 构建 Docker 镜像并导出为 tar.gz，供离线拷贝到目标服务器
 #
 # 用法:
-#   ./docker/build.sh           # 构建并导出
-#   ./docker/build.sh --no-export  # 仅构建不导出
+#   ./docker/build.sh              # 默认 arm64 构建并导出
+#   ./docker/build.sh amd64         # 构建 amd64（x86_64，如 CentOS/Intel Xeon）
+#   ./docker/build.sh arm64        # 构建 arm64（银河麒麟 V10）
+#   ./docker/build.sh amd64 --no-export  # 仅构建不导出
 # =============================================================================
 
 cd "$(dirname "$0")/.."
 
-IMAGE_NAME="training:arm64"
-TARBALL="training-arm64.tar.gz"
+ARCH=arm64
 EXPORT=true
+for arg in "$@"; do
+    case "$arg" in
+        amd64|arm64) ARCH="$arg" ;;
+        --no-export) EXPORT=false ;;
+    esac
+done
 
-if [ "$1" = "--no-export" ]; then
-    EXPORT=false
-fi
+IMAGE_NAME="training:${ARCH}"
+TARBALL="training-${ARCH}.tar.gz"
 
 # 检查 buildx 是否可用
 if ! docker buildx version >/dev/null 2>&1; then
@@ -26,13 +32,13 @@ if ! docker buildx version >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "[build] 构建 ${IMAGE_NAME} (linux/arm64)..."
+echo "[build] 构建 ${IMAGE_NAME} (linux/${ARCH})..."
 echo "[build]   前端: node:20 原生构建"
-echo "[build]   后端: golang:1.26 交叉编译 GOARCH=arm64"
-echo "[build]   运行时: ubuntu:22.04 arm64"
+echo "[build]   后端: golang:1.26 交叉编译 GOARCH=${ARCH}"
+echo "[build]   运行时: ubuntu:22.04 ${ARCH}"
 echo ""
 
-docker buildx build --platform linux/arm64 --load \
+docker buildx build --platform "linux/${ARCH}" --load \
     -t "$IMAGE_NAME" -f docker/Dockerfile .
 
 echo ""
