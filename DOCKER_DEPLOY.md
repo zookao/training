@@ -18,7 +18,6 @@ docker version
 ```
 
 # 配置docker的service
-```
 `vim /etc/systemd/system/docker.service`
 
 ```
@@ -62,4 +61,4 @@ sudo firewall-cmd --reload
 ```
 
 # 修改数据库密码
-./change-password.sh 'MyNewStrongPwd@2026'
+`./change-password.sh 'MyNewStrongPwd@2026'`
