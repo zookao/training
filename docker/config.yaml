@@ -20,7 +20,9 @@ jwt:
   issuer: training
 
 libreoffice:
-  path: ""    # 留空自动探测 PATH（容器内 /usr/bin/soffice）
+  path: ""              # 留空自动探测 PATH（容器内 /usr/bin/soffice）
+  maxConcurrency: 1     # 严格串行排队，避免 LibreOffice headless 并发失败
+  queueTimeoutSec: 1800  # 排队超时 30 分钟
 
 ffmpeg:
   path: ""    # 留空自动探测 PATH（容器内 /usr/bin/ffmpeg）
