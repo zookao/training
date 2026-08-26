@@ -1,11 +1,9 @@
 /var/log/supervisor/*.log {
-    daily
+    size 70M
     rotate 14
     copytruncate
     compress
     delaycompress
     missingok
     notifempty
-    dateext
-    dateformat -%Y%m%d
 }
