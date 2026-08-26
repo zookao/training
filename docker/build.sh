@@ -4,17 +4,19 @@ set -e
 # =============================================================================
 # 构建脚本（在开发机执行）
 # 构建 Docker 镜像并导出为 tar.gz，供离线拷贝到目标服务器
+# 架构：传参 amd64/arm64 则用参数，不传则跟随宿主机架构
 #
 # 用法:
-#   ./docker/build.sh              # 默认 arm64 构建并导出
-#   ./docker/build.sh amd64         # 构建 amd64（x86_64，如 CentOS/Intel Xeon）
-#   ./docker/build.sh arm64        # 构建 arm64（银河麒麟 V10）
-#   ./docker/build.sh amd64 --no-export  # 仅构建不导出
+#   ./docker/build.sh              # 架构跟随宿主机，构建并导出
+#   ./docker/build.sh amd64        # 指定 amd64
+#   ./docker/build.sh arm64        # 指定 arm64
+#   ./docker/build.sh --no-export  # 仅构建不导出（架构跟随宿主机）
+#   ./docker/build.sh amd64 --no-export
 # =============================================================================
 
 cd "$(dirname "$0")/.."
 
-ARCH=arm64
+ARCH=""
 EXPORT=true
 for arg in "$@"; do
     case "$arg" in
@@ -22,6 +24,15 @@ for arg in "$@"; do
         --no-export) EXPORT=false ;;
     esac
 done
+
+# 未显式指定架构时跟随宿主机（x86_64→amd64，aarch64/arm64→arm64）
+if [ -z "$ARCH" ]; then
+    case "$(uname -m)" in
+        x86_64|amd64) ARCH=amd64 ;;
+        aarch64|arm64) ARCH=arm64 ;;
+        *) echo "[build] 不支持的架构: $(uname -m)"; exit 1 ;;
+    esac
+fi
 
 IMAGE_NAME="training:${ARCH}"
 TARBALL="training-${ARCH}.tar.gz"

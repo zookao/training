@@ -14,18 +14,6 @@
 - 管理员：`admin / admin123`（超管，bypass 权限校验）
 - 学员：前台注册或后台批量导入（初始密码 = 手机号）
 
-## 数据初始化
-SET FOREIGN_KEY_CHECKS = 0;
-
-TRUNCATE TABLE class_courses;
-TRUNCATE TABLE class_users;
-TRUNCATE TABLE classes;
-TRUNCATE TABLE video_records;
-TRUNCATE TABLE videos;
-TRUNCATE TABLE courses;
-
-SET FOREIGN_KEY_CHECKS = 1;
-
 ## 部署
 请参考DEPLOY.md
 

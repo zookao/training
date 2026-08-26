@@ -4,21 +4,28 @@ set -e
 # =============================================================================
 # 一键部署脚本（在服务器执行）
 # 自动加载镜像（如未加载）→ 创建数据卷 → 启动容器
+# 架构：传参 amd64/arm64 则用参数，不传则跟随宿主机架构
 #
 # 用法:
-#   ./run.sh                          # 默认 arm64 启动
-#   ./run.sh amd64                   # 指定 amd64（x86_64 服务器）
-#   ./run.sh arm64                   # 指定 arm64（arm64 服务器）
-#   MYSQL_PASSWORD=YourPass ./run.sh # 指定数据库密码（架构用默认 arm64）
-#   JWT_SIGNING_KEY=xxx ./run.sh     # 指定 JWT 密钥
+#   ./run.sh                          # 架构跟随宿主机，使用默认密码启动
+#   ./run.sh amd64                   # 指定 amd64
+#   ./run.sh arm64                   # 指定 arm64
+#   MYSQL_PASSWORD=YourPass ./run.sh  # 指定数据库密码（架构跟随宿主机）
+#   JWT_SIGNING_KEY=xxx ./run.sh      # 指定 JWT 密钥
 # =============================================================================
 
-# 架构参数：第一个位置参数为 amd64/arm64，默认 arm64
-ARCH=${1:-arm64}
-case "$ARCH" in
-    amd64|arm64) ;;
-    *) echo "[run] 不支持的架构: $ARCH（可选 amd64/arm64）"; exit 1 ;;
+# 架构：第一个参数为 amd64/arm64 则使用，否则按宿主机架构
+ARCH=""
+case "$1" in
+    amd64|arm64) ARCH="$1" ;;
 esac
+if [ -z "$ARCH" ]; then
+    case "$(uname -m)" in
+        x86_64|amd64) ARCH=amd64 ;;
+        aarch64|arm64) ARCH=arm64 ;;
+        *) echo "[run] 不支持的架构: $(uname -m)"; exit 1 ;;
+    esac
+fi
 IMAGE_NAME="training:${ARCH}"
 CONTAINER_NAME="training"
 TARBALL="training-${ARCH}.tar.gz"
