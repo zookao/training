@@ -11,7 +11,7 @@ const modules = import.meta.glob('@/views/**/*.vue')
 // 兜底 404 路由命名（命名后重复添加会自动替换，避免多次登录累积重复路由）
 const CATCH_ALL_NAME = 'CatchAllRedirect'
 // 已注册的动态路由名（仅记录顶级路由；removeRoute 顶级路由时会级联删除其子路由）
-let addedRouteNames: string[] = []
+let addedRouteNames: (string | symbol)[] = []
 
 function removeDynamicRoutes() {
   addedRouteNames.forEach((name) => {
