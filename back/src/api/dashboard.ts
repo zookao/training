@@ -22,6 +22,9 @@ export interface DashboardData {
   recordCount: number
   completedCount: number
   avgProgress: number
+  learnerCount: number
+  completionRate: number
+  todayActive: number
   recentRecords: RecentLearnItem[]
 }
 

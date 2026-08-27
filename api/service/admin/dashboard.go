@@ -31,6 +31,9 @@ type DashboardRes struct {
 	RecordCount    int64             `json:"recordCount"`    // 学习记录数
 	CompletedCount int64             `json:"completedCount"` // 已完成视频数
 	AvgProgress    int               `json:"avgProgress"`    // 平均学习进度
+	LearnerCount   int64             `json:"learnerCount"`   // 学习人数（有过学习行为的学员数）
+	CompletionRate int               `json:"completionRate"` // 完成率（已完成/总记录，%）
+	TodayActive    int64             `json:"todayActive"`    // 今日活跃学员数
 	RecentRecords  []RecentLearnItem `json:"recentRecords"`  // 最近学习
 }
 
@@ -61,6 +64,7 @@ func Dashboard() (*DashboardRes, error) {
 		Where("vr.completed = ?", true).Count(&res.CompletedCount)
 
 	// 平均进度
+	today := time.Now().Format("2006-01-02")
 	var avgPercent *float64
 	global.DB.Table("video_records AS vr").
 		Joins("INNER JOIN users u ON u.id = vr.user_id AND u.deleted_at IS NULL").
@@ -69,6 +73,23 @@ func Dashboard() (*DashboardRes, error) {
 	if avgPercent != nil {
 		res.AvgProgress = int(*avgPercent)
 	}
+
+	// 学习人数（有学习记录的去重学员数）
+	global.DB.Table("video_records AS vr").
+		Joins("INNER JOIN users u ON u.id = vr.user_id AND u.deleted_at IS NULL").
+		Joins("INNER JOIN courses c ON c.id = vr.course_id AND c.deleted_at IS NULL").
+		Select("COUNT(DISTINCT vr.user_id)").Row().Scan(&res.LearnerCount)
+
+	// 完成率（已完成视频数 / 学习记录数）
+	if res.RecordCount > 0 {
+		res.CompletionRate = int(float64(res.CompletedCount) * 100 / float64(res.RecordCount))
+	}
+
+	// 今日活跃学员数（今天有学习行为）
+	global.DB.Table("video_records AS vr").
+		Joins("INNER JOIN users u ON u.id = vr.user_id AND u.deleted_at IS NULL").
+		Joins("INNER JOIN courses c ON c.id = vr.course_id AND c.deleted_at IS NULL").
+		Where("vr.last_at >= ?", today).Count(&res.TodayActive)
 
 	// 最近 10 条学习记录（关联学员与课程标题，排除已软删除的学员/课程）
 	type joinRow struct {

@@ -23,6 +23,10 @@
           </template>
           <div class="learn-metrics">
             <div class="metric">
+              <div class="metric-value">{{ data?.learnerCount ?? 0 }}</div>
+              <div class="metric-label">学习人数</div>
+            </div>
+            <div class="metric">
               <div class="metric-value">{{ data?.recordCount ?? 0 }}</div>
               <div class="metric-label">学习记录数</div>
             </div>
@@ -33,6 +37,14 @@
             <div class="metric">
               <div class="metric-value">{{ data?.avgProgress ?? 0 }}%</div>
               <div class="metric-label">平均学习进度</div>
+            </div>
+            <div class="metric">
+              <div class="metric-value">{{ data?.completionRate ?? 0 }}%</div>
+              <div class="metric-label">完成率</div>
+            </div>
+            <div class="metric">
+              <div class="metric-value">{{ data?.todayActive ?? 0 }}</div>
+              <div class="metric-label">今日活跃学员</div>
             </div>
           </div>
         </el-card>
@@ -155,16 +167,24 @@ onMounted(() => {
   font-weight: 600;
 }
 .learn-metrics {
-  display: flex;
-  justify-content: space-around;
-  padding: 12px 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px 0;
+  padding: 12px 0 6px;
 }
 .metric {
   text-align: center;
+  min-width: 0;
   .metric-value {
     font-size: 28px;
     font-weight: 600;
     color: #409eff;
+    line-height: 1.2;
+    // 数字超长时防溢出：优先换行兜底，超长降字号
+    overflow-wrap: break-word;
+    @media (max-width: 1400px) {
+      font-size: 24px;
+    }
   }
   .metric-label {
     font-size: 13px;
