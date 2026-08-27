@@ -18,11 +18,8 @@ router.beforeEach(async (to, _from, next) => {
     if (userStore.roles.length === 0) {
       try {
         await userStore.fetchUserInfo()
-        const accessRoutes = await menuStore.generateRoutes()
-        // 动态注入路由
-        accessRoutes.forEach((r) => router.addRoute(r))
-        // 兜底 404（必须最后添加）
-        router.addRoute({ path: '/:pathMatch(.*)*', redirect: '/404' })
+        // generateRoutes 内部完成动态路由注册与兜底 404
+        await menuStore.generateRoutes()
         next({ ...to, replace: true })
       } catch (e: any) {
         await userStore.logout()
