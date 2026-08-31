@@ -85,11 +85,12 @@ func Dashboard() (*DashboardRes, error) {
 		res.CompletionRate = int(float64(res.CompletedCount) * 100 / float64(res.RecordCount))
 	}
 
-	// 今日活跃学员数（今天有学习行为）
+	// 今日活跃学员数（今天有学习行为的去重学员数，按 user_id 去重，避免同一学员看多个视频被重复计数）
 	global.DB.Table("video_records AS vr").
 		Joins("INNER JOIN users u ON u.id = vr.user_id AND u.deleted_at IS NULL").
 		Joins("INNER JOIN courses c ON c.id = vr.course_id AND c.deleted_at IS NULL").
-		Where("vr.last_at >= ?", today).Count(&res.TodayActive)
+		Where("vr.last_at >= ?", today).
+		Select("COUNT(DISTINCT vr.user_id)").Row().Scan(&res.TodayActive)
 
 	// 最近 10 条学习记录（关联学员与课程标题，排除已软删除的学员/课程）
 	type joinRow struct {
