@@ -189,6 +189,8 @@ import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
 import { getCourseLearn, reportProgress, checkPass, type CourseLearnRes, type VideoLearnItem } from '@/api/learning'
 import { getCourseExam, type ExamTestpaperItem } from '@/api/exam'
 import { authUrl } from '@/utils/authUrl'
+import { getToken } from '@/api/request'
+import { setWorkerInterval, type StableInterval } from '@/utils/workerInterval'
 import ExamDialog from './exam-dialog.vue'
 import SlideCheck from './slide-check.vue'
 
@@ -430,7 +432,7 @@ watch(currentVideo, () => {
 })
 
 // 上报状态
-let reportTimer: number | null = null
+let reportTimer: StableInterval | null = null
 const REPORT_INTERVAL = 10        // 每 10 秒上报一次
 let lastReportPosition = -1       // 上次上报的位置，避免重复上报
 let reporting = false             // 是否正在上报中，防止并发请求
@@ -670,11 +672,14 @@ async function flushReport(force: boolean) {
   }
 }
 
-// 唯一的周期性上报机制：每 10 秒由定时器触发一次（播放中才上报）
-// 注意：不再使用 timeupdate 触发上报，避免与定时器叠加导致重复请求
+// 唯一的周期性上报机制：每 10 秒由 Worker 定时器触发一次（播放中才上报）
+// 注意：不再使用 timeupdate 触发上报，避免与定时器叠加导致重复请求；
+// 必须用 Worker 定时器而非主线程 setInterval——后台标签页的主线程 setInterval
+// 会被浏览器节流到约 1 次/分钟，而服务端每次上报最多承认 13 秒前进，
+// 挂后台听课会丢失约 80% 进度（Worker 内定时器不受后台节流约束）
 function startTimer() {
   stopTimer()
-  reportTimer = window.setInterval(() => {
+  reportTimer = setWorkerInterval(() => {
     const v = videoRef.value
     if (v && !v.paused && !v.ended) {
       flushReport(false)
@@ -683,7 +688,7 @@ function startTimer() {
 }
 function stopTimer() {
   if (reportTimer !== null) {
-    clearInterval(reportTimer)
+    reportTimer.clear()
     reportTimer = null
   }
 }
@@ -697,9 +702,30 @@ watch(currentVideoId, () => {
   manualUntil = 0
 })
 
-// 页面离开前上报 + 关闭定时器（注意：beforeunload 用 sendBeacon 更可靠，这里用普通请求）
+// 页面卸载时用 sendBeacon 上报最后进度：卸载过程中的 fetch/XHR 可能被浏览器
+// 取消（最多丢一个上报周期的进度），beacon 由浏览器保证送达；
+// beacon 无法设置 Header，token 走 query（后端 JWTAuth 兼容静态资源同款方式）
+function reportBeacon() {
+  const v = videoRef.value
+  const rec = currentVideo.value
+  if (!v || !rec) return
+  const payload = {
+    videoId: rec.id,
+    courseId,
+    classId,
+    position: Math.floor(v.currentTime),
+    duration: rec.duration || Math.floor(v.duration || 0),
+    completed: false
+  }
+  const token = getToken()
+  const url = `/api/user/progress${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  if (navigator.sendBeacon && navigator.sendBeacon(url, new Blob([JSON.stringify(payload)], { type: 'application/json' }))) {
+    return
+  }
+  flushReport(true) // 回退：不支持 beacon 或入队失败时用普通请求
+}
 function handleBeforeUnload() {
-  flushReport(true)
+  reportBeacon()
 }
 function handleVisibilityChange() {
   if (document.hidden) {
@@ -728,6 +754,9 @@ onMounted(async () => {
   await loadCourse()
   startTimer()
   window.addEventListener('beforeunload', handleBeforeUnload)
+  // 移动端浏览器可能不触发 beforeunload，pagehide 兜底（重复上报无害：
+  // 服务端对同秒重复上报前进额度记 0）
+  window.addEventListener('pagehide', handleBeforeUnload)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   window.addEventListener('resize', handleResize)
 })
@@ -743,6 +772,7 @@ onBeforeUnmount(() => {
   // destroy 会销毁共享 worker，重建 workerPort 供下次进入页面时使用
   pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.removeEventListener('pagehide', handleBeforeUnload)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   window.removeEventListener('resize', handleResize)
 })

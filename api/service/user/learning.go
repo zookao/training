@@ -8,6 +8,8 @@ import (
 	"training/global"
 	adminModel "training/model/admin"
 	userModel "training/model/user"
+
+	"gorm.io/gorm/clause"
 )
 
 // 学习校验相关常量：
@@ -190,6 +192,8 @@ const (
 //     且不超过一个上报周期 + buffer。这样无法通过一次 position=duration 的请求直接标记完成。
 //  3. duration 以服务端 videos 表存储的值为准（上传时由 MP4 box 解析）；旧数据无值时兜底取前端上报值。
 //  4. 当前播放位置 position 不得超过防作弊后的最远点。
+//  5. 到达校验点仅置待校验状态，绝不据此抬高 maxPosition：客户端 position 只用于判定"已到达"，
+//     换不到进度，防止伪造大 position 配合循环 CheckPass 刷完视频。
 func ReportProgress(userID uint, req userModel.ProgressReq) (*userModel.ProgressRes, error) {
 	// 校验：视频必须存在且属于请求的 courseID，且学员有该课程的访问权限
 	var video adminModel.Video
@@ -222,9 +226,16 @@ func ReportProgress(userID uint, req userModel.ProgressReq) (*userModel.Progress
 		if elapsed < 0 {
 			elapsed = 0
 		}
-		maxAdvance = elapsed + bufferSeconds
-		if maxAdvance > reportInterval+bufferSeconds {
-			maxAdvance = reportInterval + bufferSeconds
+		if elapsed == 0 {
+			// 同一秒内的重复上报不产生前进额度：否则高频轰炸上报（每次白得 buffer 秒）
+			// 可以远超实时速度堆进度。合法场景下此时 position 几乎未动，无损失，
+			// 后续正常上报以 oldMax 为基准可追回
+			maxAdvance = 0
+		} else {
+			maxAdvance = elapsed + bufferSeconds
+			if maxAdvance > reportInterval+bufferSeconds {
+				maxAdvance = reportInterval + bufferSeconds
+			}
 		}
 	}
 
@@ -279,12 +290,17 @@ func ReportProgress(userID uint, req userModel.ProgressReq) (*userModel.Progress
 				newPosition = nextCheckPos
 			}
 		} else if newMax >= nextCheckPos || req.Position >= nextCheckPos {
-			// 用户已播放到校验点（前端防快进保证 currentTime 不超真实最远点）。
-			// 跨会话重新进入时 oldMax 可能落后 nextCheckPos 超过单次上报上限（13s），
-			// 此时 newMax 受防作弊 cap 限制到不了 nextCheckPos，但用户确实已到达，
-			// 故以 req.Position 兜底置为待校验，避免 CheckPass 因 maxPosition<nextCheckPos 拒绝、弹窗卡死。
+			// 已到达校验点：置为待校验，并把最远点冻结在校验点。
+			// req.Position 仅用于判定"已到达"（跨会话重进时 oldMax 可能落后校验点
+			// 超过单次上报上限 13s，若只看 newMax 会让 CheckPass 因 maxPosition<
+			// nextCheckPosition 拒绝、弹窗卡死），但绝不能据此抬高 maxPosition——
+			// 否则客户端伪造一个大 position 即可白嫖整个校验区间的进度，
+			// 配合脚本循环上报+CheckPass 几分钟就能刷完任意时长的视频。
+			// 冻结只降不升：newMax 高于校验点时压回，低于时保持，进度照常按次累计。
 			checkPending = true
-			newMax = nextCheckPos
+			if newMax > nextCheckPos {
+				newMax = nextCheckPos
+			}
 			if newPosition > nextCheckPos {
 				newPosition = nextCheckPos
 			}
@@ -335,8 +351,18 @@ func ReportProgress(userID uint, req userModel.ProgressReq) (*userModel.Progress
 			CheckPending:       checkPending,
 			LastAt:             now,
 		}
-		if e := global.DB.Create(&rec).Error; e != nil {
-			return nil, e
+		// OnConflict DoNothing：双开标签页并发首报时，两侧可能同时走到 Create，
+		// 直接撞 idx_user_video 唯一索引报错；落空的一侧返回冲突错误，
+		// 前端对上报失败静默处理，下个上报周期自动走更新路径
+		res := global.DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "video_id"}},
+			DoNothing: true,
+		}).Create(&rec)
+		if res.Error != nil {
+			return nil, res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil, errors.New("进度上报冲突，下个上报周期自动恢复")
 		}
 	}
 	return &userModel.ProgressRes{
