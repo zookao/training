@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { User, Lock, Reading, VideoCamera } from '@element-plus/icons-vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useUserStore } from '@/stores/user'
@@ -47,6 +47,7 @@ import { useSiteStore } from '@/stores/site'
 import defaultLogo from '@/assets/logo.svg'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 const siteStore = useSiteStore()
 siteStore.ensureLoaded()
@@ -67,7 +68,11 @@ async function submit() {
       await userStore.login(form)
       await userStore.fetchUserInfo()
       ElMessage.success('登录成功')
-      router.push('/classes')
+      // 回到登录前页面（token 过期被踢出时由守卫/拦截器带上 redirect）
+      const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
+        ? route.query.redirect
+        : '/classes'
+      router.push(redirect)
     } catch (e) {
       /* error handled in interceptor */
     } finally {

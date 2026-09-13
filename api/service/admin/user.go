@@ -169,13 +169,19 @@ func UserResetPassword(id uint, password string) error {
 		Update("password", pwd).Error
 }
 
-// UserDelete 删除学员
+// UserDelete 删除学员（一并清理班级关联与全部学习数据，避免孤儿记录）
 func UserDelete(id uint) error {
 	return global.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("user_id = ?", id).Delete(&adminModel.ClassUser{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("user_id = ?", id).Delete(&userModel.VideoRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&userModel.TestpaperRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&userModel.CheckLog{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&userModel.User{}, id).Error

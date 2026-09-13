@@ -17,7 +17,10 @@ func Login(req adminModel.LoginReq, ip string) (string, error) {
 	var a adminModel.Admin
 	if err := global.DB.Where("username = ?", req.Username).First(&a).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", errors.New("账号不存在")
+			// 账号不存在与密码错误返回同一提示（防用户名枚举），
+			// 仍跑一次 dummy bcrypt 比对抹平响应时间差
+			utils.CheckDummyPassword(req.Password)
+			return "", errors.New("账号或密码错误")
 		}
 		return "", err
 	}
@@ -25,7 +28,7 @@ func Login(req adminModel.LoginReq, ip string) (string, error) {
 		return "", errors.New("账号已被禁用")
 	}
 	if !utils.CheckPassword(a.Password, req.Password) {
-		return "", errors.New("密码错误")
+		return "", errors.New("账号或密码错误")
 	}
 	token, err := utils.GenerateToken(a.ID, a.Username, "admin",
 		global.Config.JWT.SigningKey, global.Config.JWT.Issuer, global.Config.JWT.ExpiresTime)

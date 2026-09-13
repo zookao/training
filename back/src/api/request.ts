@@ -40,9 +40,10 @@ service.interceptors.response.use(
     if (res.code === 401) {
       ElMessage.error(res.msg || '登录已过期')
       removeToken()
-      // 避免循环跳转
-      if (!location.hash.includes('/login') && !location.pathname.includes('/login')) {
-        location.href = '/'
+      // 携带当前路径跳登录（登录后回到原页面），避免循环跳转
+      if (!location.pathname.includes('/login')) {
+        const redirect = encodeURIComponent(location.pathname + location.search)
+        location.href = `/login?redirect=${redirect}`
       }
       return Promise.reject(new Error(res.msg))
     }
