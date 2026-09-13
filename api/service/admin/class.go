@@ -8,7 +8,6 @@ import (
 	adminModel "training/model/admin"
 	"training/model/common"
 	userModel "training/model/user"
-	"training/utils"
 
 	"gorm.io/gorm"
 )
@@ -76,15 +75,16 @@ func ClassDelete(id uint) error {
 	if count > 0 {
 		return fmt.Errorf("该班级已有 %d 条视频学习记录，不允许删除", count)
 	}
-	return global.DB.Transaction(func(tx *gorm.DB) error {
+	if err := global.DB.Transaction(func(tx *gorm.DB) error {
 		tx.Where("class_id = ?", id).Delete(&adminModel.ClassCourse{})
 		tx.Where("class_id = ?", id).Delete(&adminModel.ClassUser{})
-		if err := tx.Delete(&adminModel.Class{}, id).Error; err != nil {
-			return err
-		}
-		utils.DeleteUploadByURL(c.Cover)
-		return nil
-	})
+		return tx.Delete(&adminModel.Class{}, id).Error
+	}); err != nil {
+		return err
+	}
+	// 出事务（已提交）后再清理封面文件，且确认未被其他课程/班级引用
+	deleteCoverIfUnreferenced(c.Cover)
+	return nil
 }
 
 // ClassCourseIDs 班级已绑课程ID

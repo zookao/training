@@ -7,6 +7,7 @@ import (
 	"training/core"
 	"training/global"
 	"training/initialize"
+	adminService "training/service/admin"
 	userService "training/service/user"
 	"training/utils"
 )
@@ -43,6 +44,9 @@ func main() {
 	// 6. 启动考试超时清理定时任务（后台协程，依赖 DB 已就绪）
 	userService.StartExamScheduler()
 
-	// 7. 启动服务
+	// 7. 启动上传残留清扫定时任务（过期分片会话 + 无引用孤儿文件）
+	adminService.StartUploadSweeper()
+
+	// 8. 启动服务
 	core.RunServer()
 }
