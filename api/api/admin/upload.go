@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"training/middleware"
@@ -31,6 +32,39 @@ const (
 )
 
 var uploadIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// ---- 课件异步转换任务表（进程内存态，与内存 token 黑名单同一部署假设：单实例） ----
+//
+// LibreOffice 转换含排队最长可达数十分钟，同步挂在 merge 请求上会被反向代理
+// （nginx 默认 proxy_read_timeout 60s）掐断，且用户重试会重复排队。改为
+// merge 立即返回 taskId，转换在后台协程执行，前端轮询 status 获取结果。
+// 服务重启会丢失任务状态，前端轮询到"任务不存在"提示重传即可自愈
+// （分片在转换成功前不清，重传走断点续传几乎零成本）。
+type convertJob struct {
+	done      chan struct{}
+	res       adminModel.UploadVideoRes
+	err       error
+	createdAt time.Time
+}
+
+var convertJobs sync.Map // key: "<adminID>:<uploadID>" → *convertJob
+
+// convertJobTTL 任务结果保留时长：终态被取走即删；超时未取的于新任务写入时顺带清理
+const convertJobTTL = 2 * time.Hour
+
+func convertJobKey(adminID uint, uploadID string) string {
+	return strconv.FormatUint(uint64(adminID), 10) + ":" + uploadID
+}
+
+func pruneConvertJobs() {
+	cutoff := time.Now().Add(-convertJobTTL)
+	convertJobs.Range(func(k, v any) bool {
+		if j, ok := v.(*convertJob); ok && j.createdAt.Before(cutoff) {
+			convertJobs.Delete(k)
+		}
+		return true
+	})
+}
 
 // chunkMeta 分片上传元信息（落盘到 .chunks/<adminId>/<uploadId>/.meta）
 type chunkMeta struct {
@@ -371,17 +405,56 @@ func UploadChunkMerge(c *gin.Context) {
 		return
 	}
 
-	// courseware
-	cwURL, pdfURL, pageCount, ferr := utils.FinalizeCourseware(relPath, filename)
-	if ferr != nil {
-		_ = os.Remove(relPath)
-		common.Fail(c, ferr.Error())
+	// courseware：转换异步执行，立即返回 taskId（视频类型的后处理是秒级，仍同步）
+	job := &convertJob{done: make(chan struct{}), createdAt: time.Now()}
+	pruneConvertJobs()
+	convertJobs.Store(convertJobKey(claims.UserID, uploadID), job)
+	go func() {
+		defer close(job.done)
+		cwURL, pdfURL, pageCount, ferr := utils.FinalizeCourseware(relPath, filename)
+		if ferr != nil {
+			_ = os.Remove(relPath)
+			job.err = ferr
+			return
+		}
+		_ = os.RemoveAll(dir) // 成功才清理分片：失败保留供断点续传重试
+		job.res = adminModel.UploadVideoRes{
+			Courseware:          cwURL,
+			CoursewarePDF:       pdfURL,
+			CoursewarePageCount: pageCount,
+		}
+	}()
+	common.OK(c, gin.H{"pending": true, "taskId": uploadID})
+}
+
+// UploadChunkStatus GET /api/admin/upload/chunk/status?uploadId=
+// 查询异步课件转换任务：进行中返回 pending，完成返回上传结果，失败返回错误
+func UploadChunkStatus(c *gin.Context) {
+	uploadID := c.Query("uploadId")
+	if !uploadIDRe.MatchString(uploadID) {
+		common.Fail(c, "uploadId 非法")
 		return
 	}
-	_ = os.RemoveAll(dir)
-	common.OK(c, adminModel.UploadVideoRes{
-		Courseware:          cwURL,
-		CoursewarePDF:       pdfURL,
-		CoursewarePageCount: pageCount,
-	})
+	claims := middleware.GetClaims(c)
+	if claims == nil {
+		common.FailWithCode(c, common.CodeNoAuth, "未登录")
+		return
+	}
+	v, ok := convertJobs.Load(convertJobKey(claims.UserID, uploadID))
+	if !ok {
+		common.Fail(c, "转换任务不存在（服务可能已重启），请重新上传")
+		return
+	}
+	job := v.(*convertJob)
+	select {
+	case <-job.done:
+		convertJobs.Delete(convertJobKey(claims.UserID, uploadID)) // 终态取走即清
+		if job.err != nil {
+			common.Fail(c, job.err.Error())
+			return
+		}
+		common.OK(c, job.res)
+	default:
+		common.OK(c, gin.H{"pending": true})
+	}
 }

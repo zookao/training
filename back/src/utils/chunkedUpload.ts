@@ -153,10 +153,33 @@ export async function uploadFileChunked(
   if (opts.type === 'video' && opts.thumbnail) {
     mergeForm.append('thumbnail', opts.thumbnail)
   }
-  const mergeRes = await request.post<any, ApiResult<UploadVideoRes>>(
+  const mergeRes = await request.post<any, ApiResult<any>>(
     '/upload/chunk/merge',
     mergeForm,
     { timeout: 0, signal: opts.signal }
   )
-  return mergeRes.data
+  // 课件转换是异步任务（LibreOffice 排队最长数十分钟，同步等待会被反向代理
+  // 的读超时掐断）：merge 立即返回 pending+taskId，轮询 status 直到终态
+  if (mergeRes.data?.pending && mergeRes.data?.taskId) {
+    return await pollConvertStatus(mergeRes.data.taskId, opts.signal)
+  }
+  return mergeRes.data as UploadVideoRes
+}
+
+// pollConvertStatus 轮询异步转换任务直到完成/失败
+async function pollConvertStatus(taskId: string, signal?: AbortSignal): Promise<UploadVideoRes> {
+  const POLL_INTERVAL = 3000
+  const POLL_TIMEOUT = 45 * 60 * 1000 // 覆盖 LibreOffice 排队(30min)+转换(10min)上限
+  const started = Date.now()
+  while (true) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL))
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    if (Date.now() - started > POLL_TIMEOUT) {
+      throw new Error('课件转换超时（前方排队任务较多），请稍后重试')
+    }
+    const res = await request.get<any, ApiResult<any>>('/upload/chunk/status', {
+      params: { uploadId: taskId }
+    })
+    if (!res.data?.pending) return res.data as UploadVideoRes
+  }
 }
