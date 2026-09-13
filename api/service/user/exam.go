@@ -3,12 +3,13 @@ package user
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"training/global"
 	adminModel "training/model/admin"
 	userModel "training/model/user"
+
+	"gorm.io/gorm"
 )
 
 // ExamQuestionVO 学员端试题（不含答案）
@@ -46,6 +47,11 @@ type SubmitAnswerItem struct {
 type SubmitReq struct {
 	Answers []SubmitAnswerItem `json:"answers"`
 }
+
+// submitGraceSec 超时交卷宽限（秒）：倒计时归零瞬间的网络延迟、未答题确认弹窗
+// 都可能让合法交卷请求晚到，宽限期内照常判分；超过宽限则拒绝，交由超时调度器
+// 按草稿答案判分，堵住"到点后继续答题再交卷"的漏洞
+const submitGraceSec = 60
 
 // AnswerDetail 答题明细
 type AnswerDetail struct {
@@ -93,40 +99,60 @@ func GetExam(userID, testpaperID uint) (*ExamTestpaperVO, error) {
 		}
 	}
 
-	// 使用 MySQL GET_LOCK 串行化同一用户同一试卷的并发进入请求，
-	// 防止 check-then-create 竞态导致重复创建未提交考试记录
-	lockKey := fmt.Sprintf("exam_enter:%d:%d", userID, testpaperID)
-	global.DB.Exec("SELECT GET_LOCK(?, 10)", lockKey)
-	defer global.DB.Exec("SELECT RELEASE_LOCK(?)", lockKey)
-
 	// 检查是否有未完成的考试记录（submitted_at IS NULL）
 	var record userModel.TestpaperRecord
 	now := time.Now()
 	totalSec := tp.Duration * 60
 	hasUnfinished := false
+	overtime := false
+	overtimeElapsed := 0
 
-	if err := global.DB.Where("testpaper_id = ? AND user_id = ? AND submitted_at IS NULL", testpaperID, userID).
-		First(&record).Error; err == nil {
-		// 有未完成记录
-		hasUnfinished = true
-		elapsed := int(now.Sub(record.StartedAt).Seconds())
-		remainSec := totalSec - elapsed
-		if remainSec <= 0 {
-			// 超时自动交卷：用草稿答案判分（已答内容给分，未答算错）
-			gradeAndSave(&tp, &record, parseDraftMap(record.DraftAnswers), now, elapsed)
-			return nil, errors.New("考试已超时，已自动交卷")
+	// 事务 + FOR UPDATE 锁定 users 行，串行化同一学员的并发进入请求，
+	// 防止 check-then-create 竞态导致重复创建未提交考试记录。
+	// （原实现用 MySQL GET_LOCK，但 GORM 连接池下 GET_LOCK/RELEASE_LOCK 与
+	// 后续查询可能落在不同连接：并发时锁互斥不成立，RELEASE 在非持有连接上
+	// 执行还会静默失败，锁一直泄漏到连接被回收（最长 5 分钟）。事务内行锁
+	// 提交即释放，且与连接路由无关。锁真实存在的 users 父行而非不存在的
+	// 记录行——间隙锁之间不互斥，FOR UPDATE 空行拦不住并发 INSERT。）
+	if txErr := global.DB.Transaction(func(tx *gorm.DB) error {
+		// 软删用户的物理行仍在 users 表中，同样能加锁；学员不存在时 Scan 无行不报错，
+		// 仅失去串行化（该场景本也无并发意义）
+		var lockedID int64
+		if e := tx.Raw("SELECT id FROM users WHERE id = ? FOR UPDATE", userID).Scan(&lockedID).Error; e != nil {
+			return e
 		}
-	} else {
-		// 没有未完成记录，新建一条
-		record = userModel.TestpaperRecord{
-			TestpaperID: testpaperID,
-			UserID:      userID,
-			CourseID:    tp.CourseID,
-			StartedAt:   now,
+
+		if e := tx.Where("testpaper_id = ? AND user_id = ? AND submitted_at IS NULL", testpaperID, userID).
+			First(&record).Error; e == nil {
+			// 有未完成记录
+			hasUnfinished = true
+			elapsed := int(now.Sub(record.StartedAt).Seconds())
+			remainSec := totalSec - elapsed
+			if remainSec <= 0 {
+				overtime = true
+				overtimeElapsed = elapsed
+				return nil // 出事务后再判分交卷（gradeAndSave 条件更新自身幂等）
+			}
+		} else {
+			// 没有未完成记录，新建一条
+			record = userModel.TestpaperRecord{
+				TestpaperID: testpaperID,
+				UserID:      userID,
+				CourseID:    tp.CourseID,
+				StartedAt:   now,
+			}
+			if e := tx.Create(&record).Error; e != nil {
+				return errors.New("创建考试记录失败")
+			}
 		}
-		if err := global.DB.Create(&record).Error; err != nil {
-			return nil, errors.New("创建考试记录失败")
-		}
+		return nil
+	}); txErr != nil {
+		return nil, txErr
+	}
+	if overtime {
+		// 超时自动交卷：用草稿答案判分（已答内容给分，未答算错）
+		gradeAndSave(&tp, &record, parseDraftMap(record.DraftAnswers), now, overtimeElapsed)
+		return nil, errors.New("考试已超时，已自动交卷")
 	}
 
 	// 获取试卷试题
@@ -210,6 +236,11 @@ func SubmitExam(userID, testpaperID uint, req SubmitReq) (*SubmitResult, error) 
 
 	now := time.Now()
 	elapsed := int(now.Sub(record.StartedAt).Seconds())
+	// 超时拒绝：宽限期外不再判分（防止到点后继续答题再交卷），记录由超时
+	// 调度器/重新进入考试时按草稿答案自动交卷
+	if maxSec := tp.Duration * 60; elapsed > maxSec+submitGraceSec {
+		return nil, errors.New("考试已超时，系统将按最后保存的答案自动交卷，请返回查看成绩")
+	}
 	// 用时不超过考试最大时长（迟交/异常情况封顶）
 	if maxSec := tp.Duration * 60; elapsed > maxSec {
 		elapsed = maxSec
@@ -226,7 +257,7 @@ func SubmitExam(userID, testpaperID uint, req SubmitReq) (*SubmitResult, error) 
 
 	// 更新考试记录（条件：仍未完成，避免与定时任务/并发重复判分）
 	answersJSON, _ := json.Marshal(details)
-	global.DB.Model(&userModel.TestpaperRecord{}).
+	res := global.DB.Model(&userModel.TestpaperRecord{}).
 		Where("id = ? AND submitted_at IS NULL", record.ID).
 		Updates(map[string]interface{}{
 			"score":        totalScore,
@@ -235,6 +266,26 @@ func SubmitExam(userID, testpaperID uint, req SubmitReq) (*SubmitResult, error) 
 			"submitted_at": now,
 			"duration":     elapsed,
 		})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		// 条件未命中：超时调度器/GetExam 已先行判分。回读库内结果返回，
+		// 保证学员看到的成绩与实际存储一致，而不是一份未生效的判分
+		var stored userModel.TestpaperRecord
+		if err := global.DB.First(&stored, record.ID).Error; err == nil {
+			var storedDetails []AnswerDetail
+			_ = json.Unmarshal([]byte(stored.Answers), &storedDetails)
+			return &SubmitResult{
+				Score:    stored.Score,
+				Passed:   stored.Passed,
+				Total:    tp.TotalScore,
+				PassLine: tp.PassScore,
+				Details:  storedDetails,
+			}, nil
+		}
+		return nil, errors.New("考试已交卷，请勿重复提交")
+	}
 
 	return &SubmitResult{
 		Score:    totalScore,

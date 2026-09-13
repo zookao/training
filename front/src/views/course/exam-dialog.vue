@@ -81,6 +81,7 @@ import { ref, computed, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Timer } from '@element-plus/icons-vue'
 import { getExam, submitExam, saveExamDraft, type ExamDetail, type SubmitResult, type DraftAnswer } from '@/api/exam'
+import { setWorkerInterval, type StableInterval } from '@/utils/workerInterval'
 
 const props = defineProps<{ visible: boolean; testpaperId: number }>()
 const emit = defineEmits<{ 'update:visible': [val: boolean] }>()
@@ -91,8 +92,9 @@ const submitted = ref(false)
 const result = ref<SubmitResult | null>(null)
 const submitting = ref(false)
 const remainSec = ref(0)
-let timer: ReturnType<typeof setInterval> | null = null
-let draftTimer: ReturnType<typeof setInterval> | null = null
+let timeoutFired = false // 倒计时归零的自动交卷是否已触发过（只触发一次）
+let timer: StableInterval | null = null
+let draftTimer: StableInterval | null = null
 const DRAFT_INTERVAL = 10000 // 10秒自动保存草稿（断点续考）
 
 interface ParsedQuestion {
@@ -142,18 +144,25 @@ async function onOpen() {
         answers.value[q.id] = q.type === 2 ? [...d] : (d.length ? d[0] : '')
       }
     }
-    // 启动倒计时（使用服务端返回的剩余时间）
+    // 启动倒计时（使用服务端返回的剩余时间）。
+    // 必须用 Worker 定时器：后台标签页的主线程 setInterval 会被节流到约
+    // 1 次/分钟，倒计时走慢会导致到点不交卷、学员超时答卷仍被判分
     remainSec.value = res.data.remainSec
-    timer = setInterval(() => {
+    timeoutFired = false
+    timer = setWorkerInterval(() => {
+      if (submitting.value || submitted.value || timeoutFired) return
       remainSec.value--
       if (remainSec.value <= 0) {
-        clearTimer()
+        remainSec.value = 0
+        // 只触发一次：自动交卷失败时不再循环轰炸，学员可手动重试，
+        // 服务端超时调度器会按最后草稿兜底判分
+        timeoutFired = true
         ElMessage.warning('考试时间到，自动交卷')
         doSubmit()
       }
     }, 1000)
     // 启动草稿自动保存（断点续考，每 10 秒存一次，防意外断电/刷新丢答案）
-    draftTimer = setInterval(saveDraft, DRAFT_INTERVAL)
+    draftTimer = setWorkerInterval(saveDraft, DRAFT_INTERVAL)
   } catch (e) {
     /* handled in interceptor */
   }
@@ -167,8 +176,8 @@ function onClosed() {
 }
 
 function clearTimer() {
-  if (timer) { clearInterval(timer); timer = null }
-  if (draftTimer) { clearInterval(draftTimer); draftTimer = null }
+  if (timer) { timer.clear(); timer = null }
+  if (draftTimer) { draftTimer.clear(); draftTimer = null }
 }
 
 // buildDraftAnswers 将当前答案组装为草稿载荷（同步快照，避免关闭时状态被重置）
@@ -226,7 +235,8 @@ async function doSubmit() {
     } catch { return }
   }
   submitting.value = true
-  clearTimer()
+  // 此处不停计时器/草稿定时器：交卷失败时学员仍可重试，期间草稿继续保存、
+  // 倒计时由 timeoutFired/submitting 防重入；成功后 submitted=true 使两者失效
   try {
     const ansArr = parsedQuestions.value.map(q => ({
       questionId: q.id,
