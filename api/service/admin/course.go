@@ -69,15 +69,14 @@ func CourseCreate(req adminModel.CourseReq) error {
 		if err := tx.Create(&c).Error; err != nil {
 			return err
 		}
-		_, err := syncVideos(tx, c.ID, req.Videos)
-		return err
+		return syncVideos(tx, c.ID, req.Videos)
 	})
 }
 
 // CourseUpdate 更新课程（含视频同步：新增/更新/删除）
+// 删除的视频仅删数据库记录，磁盘文件保留（交付要求：删除系统内容不删除上传文件）
 func CourseUpdate(id uint, req adminModel.CourseReq) error {
-	var removed []adminModel.Video
-	if err := global.DB.Transaction(func(tx *gorm.DB) error {
+	return global.DB.Transaction(func(tx *gorm.DB) error {
 		updates := map[string]interface{}{
 			"title":       req.Title,
 			"cover":       req.Cover,
@@ -88,91 +87,27 @@ func CourseUpdate(id uint, req adminModel.CourseReq) error {
 		if err := tx.Model(&adminModel.Course{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			return err
 		}
-		var err error
-		removed, err = syncVideos(tx, id, req.Videos)
-		return err
-	}); err != nil {
-		return err
-	}
-	// 事务提交成功后再清理磁盘文件：闭包内删文件会在后续步骤失败回滚时
-	// 造成"记录还在、文件没了"的 404，且无法恢复
-	deleteVideoFilesIfUnreferenced(removed)
-	return nil
+		return syncVideos(tx, id, req.Videos)
+	})
 }
 
-// CourseDelete 删除课程（含视频记录与磁盘文件）
+// CourseDelete 删除课程（含视频记录；磁盘文件保留，便于数据追溯与恢复）
 func CourseDelete(id uint) error {
-	var videos []adminModel.Video
-	if err := global.DB.Where("course_id = ?", id).Find(&videos).Error; err != nil {
-		return err
-	}
-	var c adminModel.Course
-	if err := global.DB.Select("cover").First(&c, id).Error; err != nil {
-		return err
-	}
-	if err := global.DB.Transaction(func(tx *gorm.DB) error {
+	return global.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("course_id = ?", id).Delete(&adminModel.Video{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&adminModel.Course{}, id).Error
-	}); err != nil {
-		return err
-	}
-	// 真正出事务（COMMIT 成功）后再清理磁盘文件：闭包尾部仍在 COMMIT 之前，
-	// 提交失败回滚时记录会恢复而文件已删；删除前还需确认 URL 未被其他记录引用
-	deleteVideoFilesIfUnreferenced(videos)
-	deleteCoverIfUnreferenced(c.Cover)
-	return nil
+	})
 }
 
-// VideoDelete 删除单个视频（记录 + 磁盘文件）
+// VideoDelete 删除单个视频（仅删记录，磁盘文件保留）
 func VideoDelete(courseID, videoID uint) error {
 	var v adminModel.Video
 	if err := global.DB.Where("id = ? AND course_id = ?", videoID, courseID).First(&v).Error; err != nil {
 		return errors.New("视频不存在")
 	}
-	if err := global.DB.Delete(&v).Error; err != nil {
-		return err
-	}
-	deleteVideoFilesIfUnreferenced([]adminModel.Video{v})
-	return nil
-}
-
-// deleteVideoFilesIfUnreferenced 删除视频记录对应的磁盘文件，仅当 URL 不再被
-// 任何视频记录引用时才真正删除。URL 可能被多条记录共享（历史版本按文件名
-// 哈希命名留下的存量共享，或同一 URL 被填到多个视频里），直接删会让仍在
-// 引用的记录 404。须在删除记录的事务提交之后调用（软删后的记录会被
-// Model 默认作用域过滤，不会误判为仍在引用）。
-func deleteVideoFilesIfUnreferenced(videos []adminModel.Video) {
-	for _, v := range videos {
-		for _, u := range []string{v.URL, v.Thumbnail, v.Courseware, v.CoursewarePDF} {
-			if u == "" {
-				continue
-			}
-			var count int64
-			global.DB.Model(&adminModel.Video{}).
-				Where("url = ? OR thumbnail = ? OR courseware = ? OR courseware_pdf = ?", u, u, u, u).
-				Count(&count)
-			if count == 0 {
-				utils.DeleteUploadByURL(u)
-			}
-		}
-	}
-}
-
-// deleteCoverIfUnreferenced 删除封面图文件，仅当不再被任何课程/班级引用时
-func deleteCoverIfUnreferenced(cover string) {
-	if cover == "" {
-		return
-	}
-	var count int64
-	global.DB.Model(&adminModel.Course{}).Where("cover = ?", cover).Count(&count)
-	if count == 0 {
-		global.DB.Model(&adminModel.Class{}).Where("cover = ?", cover).Count(&count)
-	}
-	if count == 0 {
-		utils.DeleteUploadByURL(cover)
-	}
+	return global.DB.Delete(&v).Error
 }
 
 // ReparseCoursewarePages 重新解析视频课件的页数并落库
@@ -218,13 +153,12 @@ func ReparseCoursewarePages(videoID uint) (int, error) {
 }
 
 // syncVideos 同步课程下的视频：req 中带 ID 的更新、不带 ID 的新增；现有但不在 req 中的删除。
-// 返回本次被移除的视频（含其文件 URL）——磁盘文件由调用方在事务提交成功后
-// 经 deleteVideoFilesIfUnreferenced 清理，事务内不删文件。
-func syncVideos(tx *gorm.DB, courseID uint, reqs []adminModel.VideoReq) ([]adminModel.Video, error) {
+// 删除仅移除数据库记录，磁盘文件保留（交付要求：删除系统内容不删除上传文件）。
+func syncVideos(tx *gorm.DB, courseID uint, reqs []adminModel.VideoReq) error {
 	// 现有视频
 	var existing []adminModel.Video
 	if err := tx.Where("course_id = ?", courseID).Find(&existing).Error; err != nil {
-		return nil, err
+		return err
 	}
 	keepIDs := make(map[uint]bool, len(reqs))
 	for _, r := range reqs {
@@ -232,14 +166,12 @@ func syncVideos(tx *gorm.DB, courseID uint, reqs []adminModel.VideoReq) ([]admin
 			keepIDs[r.ID] = true
 		}
 	}
-	// 删除：现有但不在 keep 集合中（仅删记录，文件由调用方事后清理）
-	var removed []adminModel.Video
+	// 删除：现有但不在 keep 集合中（仅删记录，文件保留）
 	for _, e := range existing {
 		if !keepIDs[e.ID] {
 			if err := tx.Delete(&adminModel.Video{}, e.ID).Error; err != nil {
-				return nil, err
+				return err
 			}
-			removed = append(removed, e)
 		}
 	}
 	// 新增/更新
@@ -259,7 +191,7 @@ func syncVideos(tx *gorm.DB, courseID uint, reqs []adminModel.VideoReq) ([]admin
 			}
 			if err := tx.Model(&adminModel.Video{}).Where("id = ? AND course_id = ?", r.ID, courseID).
 				Updates(updates).Error; err != nil {
-				return nil, err
+				return err
 			}
 		} else {
 			v := adminModel.Video{
@@ -276,11 +208,11 @@ func syncVideos(tx *gorm.DB, courseID uint, reqs []adminModel.VideoReq) ([]admin
 				Duration:            r.Duration,
 			}
 			if err := tx.Create(&v).Error; err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	return removed, nil
+	return nil
 }
 
 // ParseDurations 解析Excel打点，计算每页时长（秒）

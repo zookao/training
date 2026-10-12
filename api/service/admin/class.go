@@ -63,10 +63,10 @@ func ClassUpdate(id uint, req adminModel.ClassReq) error {
 	return global.DB.Model(&adminModel.Class{}).Where("id = ?", id).Updates(updates).Error
 }
 
-// ClassDelete 删除班级
+// ClassDelete 删除班级（封面磁盘文件保留，交付要求不删除上传文件）
 func ClassDelete(id uint) error {
 	var c adminModel.Class
-	if err := global.DB.Select("cover").First(&c, id).Error; err != nil {
+	if err := global.DB.First(&c, id).Error; err != nil {
 		return err
 	}
 	// 班级有学习数据时不允许删除
@@ -75,16 +75,11 @@ func ClassDelete(id uint) error {
 	if count > 0 {
 		return fmt.Errorf("该班级已有 %d 条视频学习记录，不允许删除", count)
 	}
-	if err := global.DB.Transaction(func(tx *gorm.DB) error {
+	return global.DB.Transaction(func(tx *gorm.DB) error {
 		tx.Where("class_id = ?", id).Delete(&adminModel.ClassCourse{})
 		tx.Where("class_id = ?", id).Delete(&adminModel.ClassUser{})
 		return tx.Delete(&adminModel.Class{}, id).Error
-	}); err != nil {
-		return err
-	}
-	// 出事务（已提交）后再清理封面文件，且确认未被其他课程/班级引用
-	deleteCoverIfUnreferenced(c.Cover)
-	return nil
+	})
 }
 
 // ClassCourseIDs 班级已绑课程ID

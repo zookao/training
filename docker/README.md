@@ -132,25 +132,36 @@ cd docker
 |---------------|----------|------|
 | `training_upload` | `/app/upload` | 上传的视频、课件、图片 |
 | `training_db` | `/app/db` | MariaDB 数据库文件 |
-| `training_log` | `/var/log/supervisor` | supervisord 各进程日志（mysqld/training/nginx） |
+| `training_db_backup` | `/app/db_backup` | 数据库每日自动备份（gzip，保留 14 份） |
+| `training_log` | `/var/log/supervisor` | supervisord 各进程日志（mysqld/training/nginx/backup） |
 
 删除容器重建数据不丢。**删除 volume 才会丢数据**：
 ```bash
 # 危险！会删除所有数据
-docker volume rm training_upload training_db
+docker volume rm training_upload training_db training_db_backup
 ```
 
 ## 备份与迁移
 
-```bash
-# 备份数据库
-docker exec training mysqldump -uroot -p"$MYSQL_PASSWORD" training > backup.sql
+**数据库每日自动备份**：容器内每天 03:00 自动 `mysqldump` 备份 training 库，
+gzip 压缩存入 `training_db_backup` 卷（`/app/db_backup`），保留最近 14 份，过期自动清理。
+备份失败自动重试（5 分钟间隔，最多 3 次），日志见 `docker exec training tail /var/log/supervisor/backup.log`。
 
-# 备份上传文件
+```bash
+# 查看已有备份
+docker exec training ls -lh /app/db_backup
+
+# 手动立即备份一次
+docker exec training /app/backup.sh now
+
+# 备份上传文件（视频/课件不自动备份，需手工或自行定制 crontab）
 docker run --rm -v training_upload:/data -v "$PWD":/backup alpine tar czf /backup/upload.tar.gz -C /data .
 
-# 恢复到新服务器：先 run.sh 启动，再恢复
-docker exec -i training mysql -uroot -p"$MYSQL_PASSWORD" training < backup.sql
+# 恢复数据库（先 run.sh 启动，再恢复；从自动备份文件恢复）
+docker exec -i training sh -c \
+    'gunzip -c /app/db_backup/training-YYYYMMDD-HHMMSS.sql.gz | mysql -uroot -p"$MYSQL_ROOT_PASSWORD" training'
+
+# 恢复上传文件
 docker run --rm -v training_upload:/data -v "$PWD":/backup alpine tar xzf /backup/upload.tar.gz -C /data
 ```
 

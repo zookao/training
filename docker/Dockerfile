@@ -63,8 +63,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 容器时区设为北京时间（默认 UTC 会影响日志时间戳与日志轮转午夜计算）
 RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 
-# 创建应用目录（MariaDB 数据目录 /app/db 由 volume 持久化）
-RUN mkdir -p /app/upload /app/.chunks /app/db /var/log/supervisor /run/mysqld \
+# 创建应用目录（MariaDB 数据目录 /app/db、备份目录 /app/db_backup 由 volume 持久化）
+RUN mkdir -p /app/upload /app/.chunks /app/db /app/db_backup /var/log/supervisor /run/mysqld \
     && chown mysql:mysql /app/db /run/mysqld
 
 # 拷贝后端二进制 + 配置
@@ -90,7 +90,8 @@ COPY docker/logrotate.sh /app/logrotate.sh
 # 启动脚本
 COPY docker/entrypoint.sh /app/entrypoint.sh
 COPY docker/wait-for-mysql.sh /app/wait-for-mysql.sh
-RUN chmod +x /app/entrypoint.sh /app/wait-for-mysql.sh /app/logrotate.sh
+COPY docker/backup.sh /app/backup.sh
+RUN chmod +x /app/entrypoint.sh /app/wait-for-mysql.sh /app/logrotate.sh /app/backup.sh
 
 EXPOSE 80 81
 

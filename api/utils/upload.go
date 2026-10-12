@@ -249,15 +249,6 @@ func SaveCourseware(c *gin.Context, file *multipart.FileHeader) (coursewareURL, 
 	return coursewareURL, pdfURL, pageCount, nil
 }
 
-// DeleteUploadByURL 根据 /upload/... URL 删除本地文件（不存在则忽略）
-func DeleteUploadByURL(url string) {
-	local, ok := URLToLocalPath(url)
-	if !ok {
-		return
-	}
-	_ = os.Remove(local)
-}
-
 // URLToLocalPath 将 /upload/... URL 转换为本地相对路径
 // 返回 (路径, 是否有效)
 func URLToLocalPath(url string) (string, bool) {

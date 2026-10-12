@@ -82,6 +82,7 @@ docker run -d \
     -e JWT_SIGNING_KEY="$JWT_SIGNING_KEY" \
     -v training_upload:/app/upload \
     -v training_db:/app/db \
+    -v training_db_backup:/app/db_backup \
     -v training_log:/var/log/supervisor \
     "$IMAGE_NAME"
 
@@ -106,6 +107,8 @@ echo "常用命令:"
 echo "  查看日志:   docker logs -f training"
 echo "  服务日志:   docker exec training tail -f /var/log/supervisor/training.log"
 echo "  日志卷:     training_log → /var/log/supervisor（宿主机可直接查看）"
+echo "  数据库备份: 每天 03:00 自动备份到 training_db_backup 卷（保留 14 份）"
+echo "  手动备份:   docker exec training /app/backup.sh now"
 echo "  查看服务状态: docker exec training supervisorctl status"
 echo "  停止:       docker stop training"
 echo "  重启:       docker restart training"
